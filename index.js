@@ -4,16 +4,15 @@ import 'dotenv/config';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const serviceRoleKey = process.env.EXPO_SECRET_SUPABASE_SERVICE_ROLE_KEY;
-const device_token = process.env.EXPO_DEVICE_TOKEN
 
 const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-const sendPushNotification = async (deviceToken) => {
+const sendPushNotification = async (content, deviceToken) => {
   const message = {
     to: deviceToken,
     sound: 'default',
-    title: 'Hello 👋',
-    body: 'This is a test push notification from Supabase + Expo!',
+    title: content.title,
+    body: content.body,
   };
 
   try {
@@ -31,18 +30,34 @@ const sendPushNotification = async (deviceToken) => {
 };
 
 // Listen for changes in the 'messages' table
-// and send a push notification when a new message is inserted
+// and send a push notification to the receiver when a new message is inserted
 const channel = supabase
-.channel('realtime-push')
-.on(
-  'postgres_changes',
-  { event: '*', schema: 'public', table: 'messages' },
-  async (payload) => {
-    console.log('Change detected:', payload);
+  .channel('realtime-push')
+  .on(
+    'postgres_changes',
+    { event: '*', schema: 'public', table: 'messages' },
+    async (payload) => {
+      console.log('Change detected:', payload);
 
-    if (payload.new) {
-      await sendPushNotification(device_token);
+      const receiver_id = payload.new.receiver_id;
+      const { data: receiverData, error } = await supabase
+        .from('users')
+        .select('first_name, last_name, device_token')
+        .eq('uid', receiver_id)
+        .single();
+      if (error) {
+        console.error('Error fetching receiver device token:', error);
+        return;
+      }
+      const receiver_token = receiverData.device_token;
+
+      if (payload.new) {
+        const notificationContent = {
+          title: `Nouveau message de la part de ${receiverData.first_name} ${receiverData.last_name}`,
+          body: payload.new.content,
+        };
+        await sendPushNotification(notificationContent, receiver_token);
+      }
     }
-  }
-)
-.subscribe();
+  )
+  .subscribe();
